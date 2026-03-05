@@ -163,7 +163,7 @@ async function scanArbitrageOpportunities(): Promise<{
     const spread = highest.price - lowest.price;
     const spreadPct = (spread / lowest.price) * 100;
 
-    if (spreadPct > 0.01 && spreadPct <= 10) {
+    if (spreadPct >= 0.5 && spreadPct <= 10) {
       opportunities.push({
         symbol,
         pair: `${symbol}/USDT`,
