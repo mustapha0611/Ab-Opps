@@ -17,6 +17,7 @@ const EXCHANGES = [
   "kucoin",
   "bitget",
   "mexc",
+  "coinbase",
   "gateio",
 ];
 

@@ -11,8 +11,6 @@ export const useArbStore = defineStore("arb", () => {
   const isLoading = ref(false);
   const lastError = ref<string | null>(null);
   const lastUpdated = ref<Date | null>(null);
-  const autoRefresh = ref(true);
-  let refreshTimer: ReturnType<typeof setInterval> | null = null;
 
   // ─── Computed ───────────────────────────────────────────────────────────────
   const bestOpportunity = computed(() => {
@@ -60,25 +58,6 @@ export const useArbStore = defineStore("arb", () => {
     }
   }
 
-  /** Start auto-refreshing every N milliseconds */
-  function startAutoRefresh(intervalMs = 10000): void {
-    stopAutoRefresh();
-    autoRefresh.value = true;
-    refresh(); // Fetch immediately
-    refreshTimer = setInterval(() => {
-      if (autoRefresh.value) refresh();
-    }, intervalMs);
-  }
-
-  /** Stop auto-refreshing */
-  function stopAutoRefresh(): void {
-    autoRefresh.value = false;
-    if (refreshTimer) {
-      clearInterval(refreshTimer);
-      refreshTimer = null;
-    }
-  }
-
   /**
    * Get net profit info for a specific opportunity (accounting for fees).
    */
@@ -93,7 +72,6 @@ export const useArbStore = defineStore("arb", () => {
     isLoading,
     lastError,
     lastUpdated,
-    autoRefresh,
     // Computed
     bestOpportunity,
     bestSpreadPct,
@@ -102,8 +80,6 @@ export const useArbStore = defineStore("arb", () => {
     symbolCount,
     // Actions
     refresh,
-    startAutoRefresh,
-    stopAutoRefresh,
     getNetProfit,
   };
 });
