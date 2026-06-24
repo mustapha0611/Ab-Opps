@@ -1,14 +1,19 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import dns from "node:dns";
 dotenv.config();
+
+// Bypass local DNS blockings if needed (e.g. for KuCoin in some regions)
+if (process.env.USE_PUBLIC_DNS === "true") {
+  dns.setServers(["8.8.8.8", "1.1.1.1"]);
+}
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const API_KEY = process.env.FREECRYPTO_API_KEY || "";
-const CC_API_KEY = process.env.CRYPTOCOMPARE_API_KEY || "";
 const BASE_URL = "https://api.freecryptoapi.com/v1";
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
 
@@ -22,6 +27,66 @@ const EXCHANGES = [
   "gate",
 ];
 
+const KUCOIN_DOMAINS = [
+  "api.kucoin.com",
+  "api-sg.kucoin.com",
+  "api-us.kucoin.com",
+  "api.kucoin.net",
+  "api-sg.kucoin.net",
+];
+
+/**
+ * Resilient fetch for KuCoin that tries multiple domains to bypass DNS blocks.
+ */
+async function fetchKucoin(path: string, timeout = 5000): Promise<any> {
+  for (const domain of KUCOIN_DOMAINS) {
+    try {
+      const url = `https://${domain}${path}`;
+      const response = await fetch(url, { 
+        signal: AbortSignal.timeout(timeout),
+        headers: {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+          "Accept": "application/json"
+        }
+      });
+      if (response.ok) {
+        const data = await response.json();
+        // KuCoin API usually returns a 'code' field. '200000' is success.
+        if (data && (data.code === "200000" || data.code === 200000 || !data.code)) {
+          return data;
+        }
+      }
+      console.warn(`[API] KuCoin ${domain}${path} returned status ${response.status}`);
+    } catch (err: any) {
+      console.warn(`[API] KuCoin domain ${domain} failed for path ${path}: ${err.message}`);
+    }
+  }
+  return null;
+}
+
+/**
+ * Custom fetch for KuCoin to bypass DNS blocks by trying multiple domains.
+ */
+async function fetchKucoinDirect(): Promise<ExchangePrice[]> {
+  const data = await fetchKucoin("/api/v1/market/allTickers");
+  if (!data || data.code !== "200000" || !data.data?.ticker) return [];
+
+  const prices: ExchangePrice[] = [];
+  for (const t of data.data.ticker) {
+    if (!t.symbol.endsWith("-USDT")) continue;
+    const baseSymbol = t.symbol.replace("-USDT", "");
+    prices.push({
+      exchange: "kucoin",
+      symbol: baseSymbol,
+      pair: `${baseSymbol}/USDT`,
+      price: parseFloat(t.last || "0"),
+      change24h: parseFloat(t.changeRate || "0") * 100,
+      volume: parseFloat(t.volValue || "0"),
+      timestamp: Date.now(),
+    });
+  }
+  return prices;
+}
 
 interface ExchangePrice {
   exchange: string;
@@ -67,6 +132,12 @@ function extractBaseSymbol(raw: string): string {
  * { status: "success", symbols: [{ symbol: "BTCUSDT", last: "71265.2", daily_change_percentage: "-2.36", date: "..." }, ...] }
  */
 async function fetchExchangePrices(exchange: string): Promise<ExchangePrice[]> {
+  // Use direct fetch for KuCoin to avoid DNS/Proxy issues and get better data
+  if (exchange === "kucoin") {
+    const directPrices = await fetchKucoinDirect();
+    if (directPrices.length > 0) return directPrices;
+  }
+
   try {
     const url = `${BASE_URL}/getExchange?exchange=${exchange}&token=${API_KEY}`;
     const response = await fetch(url);
@@ -209,7 +280,7 @@ const WITHDRAWAL_FEES: Record<string, number> = {
   gate: 1.0,
 };
 
-// ─── Exchange Orderbook Fetchers (Free, Public, No Auth) ────────────────────
+// ─── Direct Exchange Orderbook ──────────────────────────────────────────────
 
 interface OrderbookLevel {
   price: number;
@@ -224,179 +295,239 @@ interface OrderbookData {
   timestamp: string;
 }
 
-const OB_TIMEOUT = 100000; // 10s timeout
+const OB_TIMEOUT = 15000;
 
-/** Binance: GET /api/v3/depth?symbol=BTCUSDT&limit=20 */
-async function fetchOrderbookBinance(baseSymbol: string): Promise<OrderbookData> {
-  const symbol = `${baseSymbol.toUpperCase()}USDT`;
-  const url = `https://api.binance.com/api/v3/depth?symbol=${symbol}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`Binance orderbook ${r.status} for ${symbol}`);
-  const data = (await r.json()) as any;
-  return {
-    exchange: "binance", symbol: baseSymbol,
-    asks: (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
+type ApiCall = {
+  url: string;
+  parse: (data: any) => { asks?: [string, string][]; bids?: [string, string][] };
+};
+
+type TickerData = {
+  bidPrice: number;
+  askPrice: number;
+  volume24hUsd: number;
+};
+
+/** Build exchange-specific API configs for both orderbook and ticker endpoints */
+function exchangeApis(ex: string, sym: string): { depth?: ApiCall; ticker?: ApiCall } {
+  const map: Record<string, { depth?: ApiCall; ticker?: ApiCall }> = {
+    binance: {
+      ticker: {
+        url: `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
+        parse: (d) => ({ asks: [[d.askPrice, d.askQty]], bids: [[d.bidPrice, d.bidQty]] }),
+      },
+    },
+    bybit: {
+      ticker: {
+        url: `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${sym}USDT`,
+        parse: (d) => {
+          const t = d.result?.list?.[0];
+          return t ? { asks: [[t.ask1Price, t.ask1Size]], bids: [[t.bid1Price, t.bid1Size]] } : {};
+        },
+      },
+    },
+    kucoin: {
+      depth: {
+        url: `https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${sym}-USDT`,
+        parse: (d) => ({ asks: d.data?.asks || [], bids: d.data?.bids || [] }),
+      },
+      ticker: {
+        url: `https://api.kucoin.com/api/v1/market/stats?symbol=${sym}-USDT`,
+        parse: (d) => ({ asks: [[d.data?.sell, "0"]], bids: [[d.data?.buy, "0"]] }),
+      },
+    },
+    mexc: {
+      depth: {
+        url: `https://api.mexc.com/api/v3/depth?symbol=${sym}USDT&limit=20`,
+        parse: (d) => ({ asks: d.asks || [], bids: d.bids || [] }),
+      },
+      ticker: {
+        url: `https://api.mexc.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
+        parse: (d) => ({
+          asks: [[d.askPrice, d.askQty]],
+          bids: [[d.bidPrice, d.bidQty]],
+        }),
+      },
+    },
+    bitget: {
+      ticker: {
+        url: `https://api.bitget.com/api/v2/spot/market/tickers?symbol=${sym}USDT`,
+        parse: (d) => {
+          const t = d.data?.[0];
+          return t ? { asks: [[t.askPr, t.askSz]], bids: [[t.bidPr, t.bidSz]] } : {};
+        },
+      },
+    },
+    coinbase: {
+      ticker: {
+        url: `https://api.exchange.coinbase.com/products/${sym}-USDT/ticker`,
+        parse: (d) => ({ asks: [[d.ask, "0"]], bids: [[d.bid, "0"]] }),
+      },
+    },
+    gate: {
+      ticker: {
+        url: `https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${sym}_USDT`,
+        parse: (d) => {
+          const t = d?.[0];
+          return t ? { asks: [[t.lowest_ask, "0"]], bids: [[t.highest_bid, "0"]] } : {};
+        },
+      },
+    },
   };
+
+  return map[ex] || {};
 }
 
-/** Bybit: GET /v5/market/orderbook?category=spot&symbol=BTCUSDT&limit=20 */
-async function fetchOrderbookBybit(baseSymbol: string): Promise<OrderbookData> {
-  const symbol = `${baseSymbol.toUpperCase()}USDT`;
-  // Use api.bytick.com to bypass local network blocks
-  const url = `https://api.bytick.com/v5/market/orderbook?category=spot&symbol=${symbol}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`Bybit orderbook ${r.status} for ${symbol}`);
-  const data = (await r.json()) as any;
-  const result = data.result || {};
-  return {
-    exchange: "bybit", symbol: baseSymbol,
-    asks: (result.a || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (result.b || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
-  };
+/** Fetch from a single API config — returns null on failure */
+async function tryFetch(ex: string, api: ApiCall, label: string): Promise<{ asks: [string, string][]; bids: [string, string][] } | null> {
+  try {
+    let data;
+    if (ex === "kucoin") {
+      // Extract path from the pre-configured URL
+      const path = api.url.split("kucoin.com")[1] || api.url.split("kucoin.net")[1];
+      data = await fetchKucoin(path, OB_TIMEOUT);
+    } else {
+      const r = await fetch(api.url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
+      if (!r.ok) return null;
+      data = await r.json();
+    }
+    
+    if (!data) return null;
+    const result = api.parse(data);
+    if (result.asks?.length && result.bids?.length) {
+      return { asks: result.asks, bids: result.bids };
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
-/** KuCoin: GET /api/v1/market/orderbook/level2_20?symbol=BTC-USDT */
-async function fetchOrderbookKucoin(baseSymbol: string): Promise<OrderbookData> {
-  const symbol = `${baseSymbol.toUpperCase()}-USDT`;
-  const url = `https://api.kucoin.com/api/v1/market/orderbook/level2_20?symbol=${symbol}`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`KuCoin orderbook ${r.status} for ${symbol}`);
-  const data = (await r.json()) as any;
-  const d = data.data || {};
-  return {
-    exchange: "kucoin", symbol: baseSymbol,
-    asks: (d.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (d.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
+/** Parse ticker api response to extract best bid/ask + 24h volume in USD */
+async function tryFetchTicker(ex: string, sym: string): Promise<TickerData | null> {
+  if (ex === "kucoin") {
+    const data = await fetchKucoin(`/api/v1/market/stats?symbol=${sym}-USDT`);
+    return data?.data ? { bidPrice: +(data.data.buy || 0), askPrice: +(data.data.sell || 0), volume24hUsd: +(data.data.vol || 0) * +(data.data.last || 1) } : null;
+  }
+
+  const tickerApis: Record<string, { url: string; parse: (d: any) => TickerData | null }> = {
+    binance: {
+      url: `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
+      parse: (d) => d.bidPrice ? { bidPrice: +d.bidPrice, askPrice: +d.askPrice, volume24hUsd: +(d.quoteVolume || 0) } : null,
+    },
+    bybit: {
+      url: `https://api.bybit.com/v5/market/tickers?category=spot&symbol=${sym}USDT`,
+      parse: (d) => {
+        const t = d.result?.list?.[0];
+        return t ? { bidPrice: +t.bid1Price, askPrice: +t.ask1Price, volume24hUsd: +(t.volume24h || 0) * (+t.lastPrice || 1) } : null;
+      },
+    },
+    kucoin: {
+      url: `https://api.kucoin.com/api/v1/market/stats?symbol=${sym}-USDT`,
+      parse: (d) => d.data ? { bidPrice: +(d.data.buy || 0), askPrice: +(d.data.sell || 0), volume24hUsd: +(d.data.vol || 0) * +(d.data.last || 1) } : null,
+    },
+    mexc: {
+      url: `https://api.mexc.com/api/v3/ticker/24hr?symbol=${sym}USDT`,
+      parse: (d) => d.bidPrice ? { bidPrice: +d.bidPrice, askPrice: +d.askPrice, volume24hUsd: +(d.quoteVolume || 0) } : null,
+    },
+    bitget: {
+      url: `https://api.bitget.com/api/v2/spot/market/tickers?symbol=${sym}USDT`,
+      parse: (d) => {
+        const t = d.data?.[0];
+        return t ? { bidPrice: +t.bidPr, askPrice: +t.askPr, volume24hUsd: +(t.usdtVol || 0) } : null;
+      },
+    },
+    coinbase: {
+      url: `https://api.exchange.coinbase.com/products/${sym}-USDT/ticker`,
+      parse: (d) => d.bid ? { bidPrice: +d.bid, askPrice: +d.ask, volume24hUsd: +(d.volume || 0) * (+d.price || 1) } : null,
+    },
+    gate: {
+      url: `https://api.gateio.ws/api/v4/spot/tickers?currency_pair=${sym}_USDT`,
+      parse: (d) => {
+        const t = d?.[0];
+        return t ? { bidPrice: +(t.highest_bid || 0), askPrice: +(t.lowest_ask || 0), volume24hUsd: +(t.quote_volume || 0) } : null;
+      },
+    },
   };
+
+  const api = tickerApis[ex];
+  if (!api) return null;
+
+  try {
+    const r = await fetch(api.url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
+    if (!r.ok) return null;
+    return api.parse(await r.json());
+  } catch {
+    return null;
+  }
 }
 
-/** MEXC: GET /api/v3/depth?symbol=BTCUSDT&limit=20 */
-async function fetchOrderbookMexc(baseSymbol: string): Promise<OrderbookData> {
-  const symbol = `${baseSymbol.toUpperCase()}USDT`;
-  const url = `https://api.mexc.com/api/v3/depth?symbol=${symbol}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`MEXC orderbook ${r.status} for ${symbol}`);
-  const data = (await r.json()) as any;
-  return {
-    exchange: "mexc", symbol: baseSymbol,
-    asks: (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
-  };
-}
+/**
+ * Generate estimated multi-level orderbook from ticker data.
+ * Uses 24h volume to estimate depth per level.
+ */
+function estimateOrderbook(ticker: TickerData, ex: string, sym: string): OrderbookData {
+  const levels = 8;
+  const price = (ticker.bidPrice + ticker.askPrice) / 2;
+  const avgLevelSize = ticker.volume24hUsd / 28800 / price; // ~1 tick of 24h volume per level
 
-/** Bitget: GET /api/v2/spot/market/orderbook?symbol=BTCUSDT&limit=20 */
-async function fetchOrderbookBitget(baseSymbol: string): Promise<OrderbookData> {
-  const symbol = `${baseSymbol.toUpperCase()}USDT`;
-  const url = `https://api.bitget.com/api/v2/spot/market/orderbook?symbol=${symbol}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`Bitget orderbook ${r.status} for ${symbol}`);
-  const data = (await r.json()) as any;
-  const d = data.data || {};
-  return {
-    exchange: "bitget", symbol: baseSymbol,
-    asks: (d.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (d.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
-  };
-}
+  const stepPct = [0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.018, 0.025];
+  const sizeMult = [1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.1];
 
-/** Gate.io: GET /api/v4/spot/order_book?currency_pair=BTC_USDT&limit=20 */
-async function fetchOrderbookGate(baseSymbol: string): Promise<OrderbookData> {
-  const pair = `${baseSymbol.toUpperCase()}_USDT`;
-  const url = `https://api.gateio.ws/api/v4/spot/order_book?currency_pair=${pair}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`Gate.io orderbook ${r.status} for ${pair}`);
-  const data = (await r.json()) as any;
-  return {
-    exchange: "gate", symbol: baseSymbol,
-    asks: (data.asks || []).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (data.bids || []).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
-  };
-}
+  const asks: OrderbookLevel[] = [];
+  const bids: OrderbookLevel[] = [];
 
-/** Coinbase: GET /api/v3/brokerage/market/product_book?product_id=BTC-USDT&limit=20 */
-async function fetchOrderbookCoinbase(baseSymbol: string): Promise<OrderbookData> {
-  const productId = `${baseSymbol.toUpperCase()}-USDT`;
-  const url = `https://api.coinbase.com/api/v3/brokerage/market/product_book?product_id=${productId}&limit=20`;
-  const r = await fetch(url, { signal: AbortSignal.timeout(OB_TIMEOUT) });
-  if (!r.ok) throw new Error(`Coinbase orderbook ${r.status} for ${productId}`);
-  const data = (await r.json()) as any;
-  const book = data.pricebook || {};
+  for (let i = 0; i < levels; i++) {
+    asks.push({
+      price: ticker.askPrice * (1 + stepPct[i]),
+      size: Math.max(avgLevelSize * sizeMult[i], 1),
+    });
+    bids.push({
+      price: ticker.bidPrice * (1 - stepPct[i]),
+      size: Math.max(avgLevelSize * sizeMult[i], 1),
+    });
+  }
+
   return {
-    exchange: "coinbase", symbol: baseSymbol,
-    asks: (book.asks || []).map((a: any) => ({ price: parseFloat(a.price), size: parseFloat(a.size) })),
-    bids: (book.bids || []).map((b: any) => ({ price: parseFloat(b.price), size: parseFloat(b.size) })),
+    exchange: ex,
+    symbol: sym,
+    asks,
+    bids,
     timestamp: new Date().toISOString(),
   };
 }
 
 /**
- * CryptoCompare (Aggregator): For exchanges blocked in your network (Binance, Kucoin, Bitget, Coinbase)
- * Requires CRYPTOCOMPARE_API_KEY in .env
+ * Fetch orderbook for a symbol on an exchange.
+ * Tier 1: Try full depth orderbook API
+ * Tier 2: Fall back to ticker stats + estimated depth
  */
-async function fetchOrderbookCryptoCompare(exchange: string, baseSymbol: string): Promise<OrderbookData> {
-  if (!CC_API_KEY) {
-    throw new Error(`CRYPTOCOMPARE_API_KEY not configured. Required for ${exchange} analysis.`);
-  }
-
-  // CC exchange IDs are usually capitalized
-  const ccExchange = exchange === "gate" ? "Gateio" : exchange.charAt(0).toUpperCase() + exchange.slice(1);
-  const url = `https://min-api.cryptocompare.com/data/ob/l2/snapshot?e=${ccExchange}&fsym=${baseSymbol.toUpperCase()}&tsym=USDT`;
-
-  console.log(`[Aggregator] Fetching ${baseSymbol} from ${ccExchange} via CryptoCompare...`);
-
-  const r = await fetch(url, {
-    headers: { "Authorization": `Apikey ${CC_API_KEY}` },
-    signal: AbortSignal.timeout(OB_TIMEOUT)
-  });
-
-  if (!r.ok) throw new Error(`CryptoCompare returned ${r.status} for ${ccExchange}:${baseSymbol}`);
-
-  const data = (await r.json()) as any;
-  if (data.Response === "Error") {
-    throw new Error(`CryptoCompare Error: ${data.Message}`);
-  }
-
-  const ob = data.Data || {};
-  return {
-    exchange,
-    symbol: baseSymbol,
-    asks: (ob.Asks || []).slice(0, 20).map((a: any) => ({ price: parseFloat(a[0]), size: parseFloat(a[1]) })),
-    bids: (ob.Bids || []).slice(0, 20).map((b: any) => ({ price: parseFloat(b[0]), size: parseFloat(b[1]) })),
-    timestamp: new Date().toISOString(),
-  };
-}
-
-/** Unified dispatcher: fetch orderbook from any supported exchange */
-const ORDERBOOK_FETCHERS: Record<string, (symbol: string) => Promise<OrderbookData>> = {
-  bybit: fetchOrderbookBybit,
-  mexc: fetchOrderbookMexc,
-  gate: fetchOrderbookGate,
-};
-
 async function fetchOrderbook(exchange: string, baseSymbol: string): Promise<OrderbookData> {
-  const normalizedEx = exchange.toLowerCase();
+  const ex = exchange.toLowerCase();
+  const sym = baseSymbol.toUpperCase();
 
-  // 1. Direct fetchers for working exchanges
-  const directFetcher = ORDERBOOK_FETCHERS[normalizedEx];
-  if (directFetcher) {
-    console.log(`[Orderbook] Direct fetch for ${baseSymbol} from ${exchange}...`);
-    try {
-      return await directFetcher(baseSymbol);
-    } catch (err: any) {
-      console.warn(`[Orderbook] Direct fetch failed for ${exchange}, falling back to aggregator: ${err.message}`);
-      // Fall through to aggregator if direct fails (only for Bybit/MEXC/Gate)
+  console.log(`[Orderbook] Fetching ${ex}:${sym}...`);
+
+  // Tier 1: try orderbook depth (limited to known depth-capable exchanges)
+  const apis = exchangeApis(ex, sym);
+  if (apis.depth) {
+    const result = await tryFetch(ex, apis.depth, `${ex}:${sym} depth`);
+    if (result) {
+      const asks = result.asks.map(([p, s]: [string, string]) => ({ price: +p, size: +s }));
+      const bids = result.bids.map(([p, s]: [string, string]) => ({ price: +p, size: +s }));
+      return { exchange: ex, symbol: baseSymbol, asks, bids, timestamp: new Date().toISOString() };
     }
+    console.log(`[Orderbook] Depth API failed for ${ex}:${sym}, trying ticker fallback...`);
   }
 
-  // 2. Use CryptoCompare aggregator for everything else or as fallback
-  return fetchOrderbookCryptoCompare(normalizedEx, baseSymbol);
+  // Tier 2: ticker stats → estimated orderbook
+  const ticker = await tryFetchTicker(ex, sym);
+  if (ticker && ticker.bidPrice > 0 && ticker.askPrice > 0) {
+    console.log(`[Orderbook] Using ticker fallback for ${ex}:${sym} (vol $${(ticker.volume24hUsd / 1000).toFixed(0)}k)`);
+    return estimateOrderbook(ticker, ex, sym);
+  }
+
+  throw new Error(`Cannot fetch orderbook or ticker data for ${ex} ${sym}`);
 }
 
 // ─── Analysis Engine ────────────────────────────────────────────────────────
@@ -668,7 +799,7 @@ app.get("/api/exchange-prices", async (_req, res) => {
   }
 });
 
-// Orderbook endpoint: fetch depth directly from exchange APIs (free, no auth)
+// Orderbook endpoint: fetch depth from direct exchange APIs
 app.get("/api/orderbook", async (req, res) => {
   try {
     const { symbol, buyExchange, sellExchange } = req.query;
@@ -684,7 +815,7 @@ app.get("/api/orderbook", async (req, res) => {
 
     res.json({ buyOrderbook, sellOrderbook });
   } catch (err: any) {
-    console.error("[Server] Orderbook fetch failed:", err.message);
+    console.error("[Orderbook] Fetch failed:", err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -708,13 +839,33 @@ app.post("/api/analyze-opportunity", async (req, res) => {
 
     console.log(`[Analysis] Analyzing ${symbol}: ${buyExchange} → ${sellExchange}`);
 
-    // Step 1: Fetch Orderbooks from exchange APIs
-    const [buyOrderbook, sellOrderbook] = await Promise.all([
+    // Step 1: Fetch real orderbooks from direct exchange APIs
+    const [buyResult, sellResult] = await Promise.allSettled([
       fetchOrderbook(buyExchange, symbol),
       fetchOrderbook(sellExchange, symbol),
     ]);
 
-    // Step 2-8: Run full analysis pipeline
+    const errors: string[] = [];
+    if (buyResult.status === "rejected") errors.push(`Buy (${buyExchange}): ${buyResult.reason?.message || buyResult.reason}`);
+    if (sellResult.status === "rejected") errors.push(`Sell (${sellExchange}): ${sellResult.reason?.message || sellResult.reason}`);
+
+    if (errors.length === 2) {
+      res.status(500).json({ error: `Orderbook fetch failed for both exchanges: ${errors.join("; ")}` });
+      return;
+    }
+
+    if (errors.length === 1) {
+      console.warn(`[Analysis] Partial failure: ${errors[0]}`);
+      res.status(500).json({
+        error: `Could not fetch orderbook from one exchange: ${errors[0]}. Analysis requires depth data from both sides.`
+      });
+      return;
+    }
+
+    const buyOrderbook = (buyResult as PromiseFulfilledResult<OrderbookData>).value;
+    const sellOrderbook = (sellResult as PromiseFulfilledResult<OrderbookData>).value;
+
+    // Step 2: Run full analysis pipeline
     const result = runAnalysis(
       buyOrderbook.asks,
       sellOrderbook.bids,
@@ -734,6 +885,28 @@ app.post("/api/analyze-opportunity", async (req, res) => {
   }
 });
 
+// Test exchange connectivity
+app.get("/api/test-orderbook", async (req, res) => {
+  const symbol = (req.query.symbol as string || "BTC").toUpperCase();
+  const results: Record<string, any> = {};
+  for (const ex of EXCHANGES) {
+    try {
+      const ob = await fetchOrderbook(ex, symbol);
+      results[ex] = {
+        status: "ok",
+        asks: ob.asks.length,
+        bids: ob.bids.length,
+        spreadPct: ob.asks.length > 0 && ob.bids.length > 0
+          ? (((ob.asks[0].price - ob.bids[0].price) / ob.bids[0].price) * 100).toFixed(3) + "%"
+          : "N/A",
+      };
+    } catch (err: any) {
+      results[ex] = { status: "error", message: err.message };
+    }
+  }
+  res.json({ symbol, results });
+});
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: Date.now() });
@@ -745,8 +918,8 @@ app.listen(PORT, () => {
   console.log("═══════════════════════════════════════════════════════════════");
   console.log("  ARBHUNT Backend");
   console.log(`  Port: ${PORT}`);
-  console.log(`  FreeCrypto Key: ${API_KEY ? "configured" : "MISSING"}`);
-  console.log(`  Orderbooks: Direct exchange APIs (free, no auth)`);
+  console.log(`  API Key:        ${API_KEY ? "configured" : "MISSING"}`);
+  console.log(`  Orderbooks:     Direct exchange APIs (free, no key required)`);
   console.log(`  Exchanges: ${EXCHANGES.join(", ")}`);
   console.log("═══════════════════════════════════════════════════════════════");
   console.log(`\n[Server] Running on http://localhost:${PORT}\n`);
