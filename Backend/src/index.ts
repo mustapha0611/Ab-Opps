@@ -836,7 +836,7 @@ app.post("/api/analyze-opportunity", async (req, res) => {
       sellExchange,
       buyPrice,
       sellPrice,
-      investmentAmounts = [100, 500, 1000, 5000],
+      investmentAmounts = [100, 200, 500, 1000, 5000],
     } = req.body;
 
     if (!symbol || !buyExchange || !sellExchange) {
@@ -940,11 +940,11 @@ app.post("/api/deep-scan", async (req, res) => {
             buyOb.asks, sellOb.bids,
             opp.symbol, opp.buyExchange, opp.sellExchange,
             opp.buyPrice, opp.sellPrice,
-            [100, 500, 1000, 5000]
+            [100, 200, 500, 1000, 5000]
           );
 
           const best = analysis.recommendation;
-          const profitableTier = analysis.analysis.find((t) => t.feasible);
+          const profitableTier = [...analysis.analysis].sort((a, b) => b.netProfitUsd - a.netProfitUsd).find((t) => t.feasible);
           const go = best.decision === "GO";
 
           return {

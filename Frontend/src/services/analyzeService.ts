@@ -10,7 +10,7 @@ const API_URL = import.meta.env.VITE_API_URL || "";
  */
 export async function analyzeOpportunity(
   opp: ArbitrageOpportunity,
-  investmentAmounts: number[] = [100, 500, 1000, 5000]
+  investmentAmounts: number[] = [100, 200, 500, 1000, 5000]
 ): Promise<AnalysisResult> {
   const response = await axios.post<AnalysisResult>(
     `${API_URL}/api/analyze-opportunity`,

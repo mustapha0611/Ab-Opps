@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, computed } from "vue";
+import { onMounted, computed, onErrorCaptured } from "vue";
 import {
   ArrowRight,
   RefreshCw,
@@ -78,6 +78,11 @@ async function handleAnalyze(opp: ArbitrageOpportunity) {
 
 onMounted(() => {
   store.refresh();
+});
+
+onErrorCaptured((err, instance, info) => {
+  console.error("[Vue Error]", err, info);
+  return false; // prevent error from propagating
 });
 </script>
 
@@ -324,7 +329,7 @@ onMounted(() => {
               <div
                 class="rounded-lg p-4 flex items-start gap-4"
                 :class="
-                  store.getAnalysis(opp)!.recommendation.decision === 'GO'
+                  store.getAnalysis(opp).recommendation.decision === 'GO'
                     ? 'bg-green-500/10 border border-green-500/30'
                     : 'bg-red-500/10 border border-red-500/30'
                 "
@@ -332,13 +337,13 @@ onMounted(() => {
                 <div
                   class="p-2 rounded-full shrink-0"
                   :class="
-                    store.getAnalysis(opp)!.recommendation.decision === 'GO'
+                    store.getAnalysis(opp).recommendation.decision === 'GO'
                       ? 'bg-green-500/20'
                       : 'bg-red-500/20'
                   "
                 >
                   <CheckCircle
-                    v-if="store.getAnalysis(opp)!.recommendation.decision === 'GO'"
+                    v-if="store.getAnalysis(opp).recommendation.decision === 'GO'"
                     class="w-6 h-6 text-green-400"
                   />
                   <XCircle v-else class="w-6 h-6 text-red-400" />
@@ -348,23 +353,23 @@ onMounted(() => {
                     <span
                       class="text-lg font-bold"
                       :class="
-                        store.getAnalysis(opp)!.recommendation.decision === 'GO'
+                        store.getAnalysis(opp).recommendation.decision === 'GO'
                           ? 'text-green-400'
                           : 'text-red-400'
                       "
                     >
-                      {{ store.getAnalysis(opp)!.recommendation.decision }}
+                      {{ store.getAnalysis(opp).recommendation.decision }}
                     </span>
                     <span
-                      v-if="store.getAnalysis(opp)!.recommendation.optimalInvestment > 0"
+                      v-if="store.getAnalysis(opp).recommendation.optimalInvestment > 0"
                       class="px-2 py-0.5 rounded bg-green-500/20 text-green-300 text-sm font-mono"
                     >
-                      Invest ${{ formatUsd(store.getAnalysis(opp)!.recommendation.optimalInvestment) }}
-                      → Profit ${{ formatUsd(store.getAnalysis(opp)!.recommendation.expectedProfit) }}
+                      Invest ${{ formatUsd(store.getAnalysis(opp).recommendation.optimalInvestment) }}
+                      → Profit ${{ formatUsd(store.getAnalysis(opp).recommendation.expectedProfit) }}
                     </span>
                   </div>
                   <p class="text-sm text-gray-300">
-                    {{ store.getAnalysis(opp)!.recommendation.reason }}
+                    {{ store.getAnalysis(opp).recommendation.reason }}
                   </p>
                 </div>
               </div>
@@ -381,40 +386,40 @@ onMounted(() => {
                     <div class="flex items-center justify-between">
                       <span class="text-xs text-gray-500">Buy side ({{ exchangeLabel(opp.buyExchange) }})</span>
                       <span class="font-mono text-sm text-neon-cyan">
-                        ${{ formatUsd(store.getAnalysis(opp)!.liquidity.buyLiquidityUsd) }}
+                        ${{ formatUsd(store.getAnalysis(opp).liquidity.buyLiquidityUsd) }}
                       </span>
                     </div>
                     <div class="w-full bg-slate-800 rounded-full h-1.5">
                       <div
                         class="h-1.5 rounded-full bg-neon-cyan/60"
-                        :style="{ width: Math.min(100, (store.getAnalysis(opp)!.liquidity.buyLiquidityUsd / 10000) * 100) + '%' }"
+                        :style="{ width: Math.min(100, (store.getAnalysis(opp).liquidity.buyLiquidityUsd / 10000) * 100) + '%' }"
                       ></div>
                     </div>
                     <div class="flex items-center justify-between">
                       <span class="text-xs text-gray-500">Sell side ({{ exchangeLabel(opp.sellExchange) }})</span>
                       <span class="font-mono text-sm text-neon-purple">
-                        ${{ formatUsd(store.getAnalysis(opp)!.liquidity.sellLiquidityUsd) }}
+                        ${{ formatUsd(store.getAnalysis(opp).liquidity.sellLiquidityUsd) }}
                       </span>
                     </div>
                     <div class="w-full bg-slate-800 rounded-full h-1.5">
                       <div
                         class="h-1.5 rounded-full bg-neon-purple/60"
-                        :style="{ width: Math.min(100, (store.getAnalysis(opp)!.liquidity.sellLiquidityUsd / 10000) * 100) + '%' }"
+                        :style="{ width: Math.min(100, (store.getAnalysis(opp).liquidity.sellLiquidityUsd / 10000) * 100) + '%' }"
                       ></div>
                     </div>
                     <div class="flex items-center gap-2 mt-2">
                       <span
                         class="text-xs px-2 py-0.5 rounded-full"
                         :class="
-                          store.getAnalysis(opp)!.liquidity.sufficient
+                          store.getAnalysis(opp).liquidity.sufficient
                             ? 'bg-green-500/20 text-green-400'
                             : 'bg-red-500/20 text-red-400'
                         "
                       >
-                        {{ store.getAnalysis(opp)!.liquidity.sufficient ? "Sufficient" : "Low" }}
+                        {{ store.getAnalysis(opp).liquidity.sufficient ? "Sufficient" : "Low" }}
                       </span>
                       <span class="text-xs text-gray-500">
-                        {{ store.getAnalysis(opp)!.liquidity.buyLevels }} / {{ store.getAnalysis(opp)!.liquidity.sellLevels }} levels
+                        {{ store.getAnalysis(opp).liquidity.buyLevels }} / {{ store.getAnalysis(opp).liquidity.sellLevels }} levels
                       </span>
                     </div>
                   </div>
@@ -432,7 +437,7 @@ onMounted(() => {
                       <div class="text-xs text-gray-500 mb-1.5">Asks ({{ exchangeLabel(opp.buyExchange) }})</div>
                       <div class="space-y-0.5">
                         <div
-                          v-for="(level, i) in store.getAnalysis(opp)!.orderbook.buyAsks.slice(0, 5)"
+                          v-for="(level, i) in store.getAnalysis(opp).orderbook.buyAsks.slice(0, 5)"
                           :key="'ask-' + i"
                           class="flex justify-between text-xs font-mono"
                         >
@@ -446,7 +451,7 @@ onMounted(() => {
                       <div class="text-xs text-gray-500 mb-1.5">Bids ({{ exchangeLabel(opp.sellExchange) }})</div>
                       <div class="space-y-0.5">
                         <div
-                          v-for="(level, i) in store.getAnalysis(opp)!.orderbook.sellBids.slice(0, 5)"
+                          v-for="(level, i) in store.getAnalysis(opp).orderbook.sellBids.slice(0, 5)"
                           :key="'bid-' + i"
                           class="flex justify-between text-xs font-mono"
                         >
@@ -481,7 +486,7 @@ onMounted(() => {
                     </thead>
                     <tbody>
                       <tr
-                        v-for="tier in store.getAnalysis(opp)!.analysis"
+                        v-for="tier in store.getAnalysis(opp).analysis"
                         :key="tier.investmentUsd"
                         class="border-b border-slate-800/50 last:border-0"
                         :class="{
