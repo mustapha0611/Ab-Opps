@@ -19,7 +19,7 @@ import {
   AlertTriangle,
 } from "lucide-vue-next";
 import { useArbStore } from "@/stores/arbStore";
-import type { ArbitrageOpportunity, AnalysisResult, InvestmentTier } from "@/types/crypto";
+import type { ArbitrageOpportunity } from "@/types/crypto";
 
 const store = useArbStore();
 
@@ -319,7 +319,7 @@ onMounted(() => {
             v-if="store.isExpanded(opp) && store.getAnalysis(opp)"
             class="border-t border-slate-700/50 bg-slate-950/50 p-5 space-y-5 animate-in"
           >
-            <template v-if="store.getAnalysis(opp) as AnalysisResult">
+            <template v-if="store.getAnalysis(opp)">
               <!-- Recommendation Banner -->
               <div
                 class="rounded-lg p-4 flex items-start gap-4"
