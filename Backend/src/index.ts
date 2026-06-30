@@ -701,7 +701,7 @@ function runAnalysis(
     // Costs and revenue
     const buyCost = buyResult.filledUsd;
     const buyFeeUsd = buyCost * (buyFeePct / 100);
-    const sellRevenue = buyResult.totalUnits * effectiveSellPrice;
+    const sellRevenue = sellResult.totalCost;
     const sellFeeUsd = sellRevenue * (sellFeePct / 100);
     const totalFeesUsd = buyFeeUsd + sellFeeUsd + withdrawalFee;
 
@@ -710,7 +710,9 @@ function runAnalysis(
     const netProfitPct = buyCost > 0 ? (netProfitUsd / buyCost) * 100 : 0;
     const roiPct = netProfitPct;
 
-    const feasible = netProfitUsd > 0 && buyResult.filledUsd >= investmentUsd * 0.9;
+    const buyFilled = buyResult.filledUsd >= investmentUsd * 0.9;
+    const sellFilled = sellResult.totalUnits >= buyResult.totalUnits * 0.9;
+    const feasible = netProfitUsd > 0 && buyFilled && sellFilled;
 
     return {
       investmentUsd,
@@ -730,7 +732,7 @@ function runAnalysis(
       netProfitPct: Math.round(netProfitPct * 100) / 100,
       roiPct: Math.round(roiPct * 100) / 100,
       feasible,
-      reason: feasible ? "Profitable after fees and slippage" : netProfitUsd <= 0 ? "Fees exceed profit" : "Partial fill only",
+      reason: feasible ? "Profitable after fees and slippage" : netProfitUsd <= 0 ? "Fees exceed profit" : !buyFilled ? "Buy side partially filled" : "Sell side has insufficient liquidity to fully exit position",
     };
   });
 
