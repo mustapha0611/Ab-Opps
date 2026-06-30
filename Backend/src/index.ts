@@ -861,16 +861,18 @@ app.post("/api/analyze-opportunity", async (req, res) => {
       return;
     }
 
-    if (errors.length === 1) {
-      console.warn(`[Analysis] Partial failure: ${errors[0]}`);
-      res.status(500).json({
-        error: `Could not fetch orderbook from one exchange: ${errors[0]}. Analysis requires depth data from both sides.`
-      });
-      return;
-    }
+    // Graceful partial failure: use empty orderbook for the failed side
+    // runAnalysis already handles empty orderbooks (marks tiers infeasible)
+    const buyOrderbook = buyResult.status === "fulfilled"
+      ? (buyResult as PromiseFulfilledResult<OrderbookData>).value
+      : { asks: [], bids: [] };
+    const sellOrderbook = sellResult.status === "fulfilled"
+      ? (sellResult as PromiseFulfilledResult<OrderbookData>).value
+      : { asks: [], bids: [] };
 
-    const buyOrderbook = (buyResult as PromiseFulfilledResult<OrderbookData>).value;
-    const sellOrderbook = (sellResult as PromiseFulfilledResult<OrderbookData>).value;
+    if (errors.length === 1) {
+      console.warn(`[Analysis] Partial failure (graceful): ${errors[0]}`);
+    }
 
     // Step 2: Run full analysis pipeline
     const result = runAnalysis(
