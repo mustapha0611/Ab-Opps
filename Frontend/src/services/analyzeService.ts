@@ -1,7 +1,7 @@
 import axios from "axios";
 import type { ArbitrageOpportunity, AnalysisResult } from "@/types/crypto";
 
-const API_URL = import.meta.env.VITE_API_URL || "http://localhost:3001";
+const API_URL = import.meta.env.VITE_API_URL || "";
 
 /**
  * Call the backend analysis endpoint for a specific opportunity.
