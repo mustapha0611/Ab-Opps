@@ -528,12 +528,12 @@ onErrorCaptured((err, instance, info) => {
                         <td class="py-2.5 px-3 text-right font-mono text-sm font-semibold"
                           :class="tier.netProfitUsd > 0 ? 'text-green-400' : tier.netProfitUsd < 0 ? 'text-red-400' : 'text-gray-500'"
                         >
-                          {{ tier.netProfitUsd !== 0 ? (tier.netProfitUsd > 0 ? '+' : '') + '$' + formatUsd(tier.netProfitUsd) : '—' }}
+                          {{ tier.netProfitUsd != null && tier.netProfitUsd !== 0 ? (tier.netProfitUsd > 0 ? '+' : '') + '$' + formatUsd(tier.netProfitUsd) : '—' }}
                         </td>
                         <td class="py-2.5 px-3 text-right font-mono text-xs"
                           :class="tier.roiPct > 0 ? 'text-green-400' : tier.roiPct < 0 ? 'text-red-400' : 'text-gray-500'"
                         >
-                          {{ tier.roiPct !== 0 ? (tier.roiPct > 0 ? '+' : '') + tier.roiPct.toFixed(2) + '%' : '—' }}
+                          {{ tier.roiPct != null && tier.roiPct !== 0 ? (tier.roiPct > 0 ? '+' : '') + tier.roiPct.toFixed(2) + '%' : '—' }}
                         </td>
                         <td class="py-2.5 pl-3 text-center">
                           <span
