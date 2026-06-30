@@ -18,10 +18,19 @@ export interface ArbitrageOpportunity {
   spreadPct: number;
   spreadUsd: number;
   timestamp: number;
+  autoVerified?: boolean;
+  autoGo?: boolean;
+  autoNetProfit?: number;
+  autoRoi?: number;
+  autoReason?: string;
 }
 
 export interface ScanResult {
   prices: ExchangePrice[];
+  opportunities: ArbitrageOpportunity[];
+}
+
+export interface DeepScanResult {
   opportunities: ArbitrageOpportunity[];
 }
 

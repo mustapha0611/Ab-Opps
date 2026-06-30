@@ -57,9 +57,11 @@ function formatUsd(val: number): string {
   return val.toFixed(2);
 }
 
-const sortedOpps = computed(() =>
-  [...store.opportunities].sort((a, b) => b.spreadPct - a.spreadPct)
-);
+const sortedOpps = computed(() => {
+  const list = [...store.opportunities];
+  if (list.length > 0 && list[0].autoVerified) return list;
+  return list.sort((a, b) => b.spreadPct - a.spreadPct);
+});
 
 async function handleAnalyze(opp: ArbitrageOpportunity) {
   const existing = store.getAnalysis(opp);
@@ -152,19 +154,19 @@ onMounted(() => {
         </div>
       </div>
 
-      <!-- Refresh Button -->
+      <!-- Deep Scan Button -->
       <div
-        class="glass-card p-4 flex items-center justify-between cursor-pointer hover:bg-slate-800/70 transition-colors"
-        @click="store.refresh()"
+        class="glass-card p-4 flex items-center justify-between cursor-pointer hover:bg-neon-cyan/10 transition-colors border border-transparent hover:border-neon-cyan/30"
+        @click="store.deepScan()"
       >
         <div class="flex items-center gap-3">
-          <div class="p-2.5 rounded-lg bg-slate-700 text-gray-300">
-            <RefreshCw class="w-5 h-5" :class="{ 'animate-spin': store.isLoading }" />
+          <div class="p-2.5 rounded-lg" :class="store.isDeepScanning ? 'bg-amber-500/20 text-amber-400' : 'bg-neon-cyan/10 text-neon-cyan'">
+            <Zap class="w-5 h-5" :class="{ 'animate-pulse': store.isDeepScanning }" />
           </div>
           <div class="min-w-0">
-            <div class="text-xs text-gray-400 truncate">Status</div>
-            <div class="text-sm font-bold">
-              {{ store.isLoading ? "Scanning..." : "Manual" }}
+            <div class="text-xs text-gray-400 truncate">Deep Scan</div>
+            <div class="text-sm font-bold" :class="store.isDeepScanning ? 'text-amber-400' : 'text-neon-cyan'">
+              {{ store.isDeepScanning ? "Analyzing..." : "Verify All" }}
             </div>
           </div>
         </div>
@@ -177,6 +179,7 @@ onMounted(() => {
         <h2 class="text-xl font-bold flex items-center gap-2">
           <Zap class="w-5 h-5 text-neon-cyan" />
           Arbitrage Opportunities
+          <span v-if="sortedOpps.length > 0 && sortedOpps[0].autoVerified" class="text-xs font-normal px-2 py-0.5 rounded-full bg-neon-cyan/10 text-neon-cyan ml-2">Deep Scanned</span>
         </h2>
         <div class="flex items-center gap-3">
           <span class="text-xs text-gray-500 font-mono" v-if="store.lastUpdated">
@@ -186,6 +189,7 @@ onMounted(() => {
             @click="store.refresh()"
             class="p-2 rounded-lg bg-slate-700 hover:bg-slate-600 transition-colors"
             :disabled="store.isLoading"
+            title="Quick Scan (sort by spread)"
           >
             <RefreshCw class="w-4 h-4" :class="{ 'animate-spin': store.isLoading }" />
           </button>
@@ -214,8 +218,13 @@ onMounted(() => {
         <div
           v-for="opp in sortedOpps"
           :key="store.oppKey(opp)"
-          class="bg-slate-900/50 border border-slate-700 rounded-lg overflow-hidden transition-all"
-          :class="{ 'border-neon-cyan/30': store.isExpanded(opp) }"
+          class="bg-slate-900/50 border rounded-lg overflow-hidden transition-all"
+          :class="[
+            store.isExpanded(opp) ? 'border-neon-cyan/30' : '',
+            opp.autoGo ? 'border-green-500/40 shadow-sm shadow-green-500/10' : '',
+            opp.autoVerified && !opp.autoGo ? 'border-slate-700/30 opacity-70' : '',
+            !opp.autoVerified && !store.isExpanded(opp) ? 'border-slate-700' : '',
+          ]"
         >
           <!-- Card Header -->
           <div class="p-5">
@@ -247,20 +256,27 @@ onMounted(() => {
               <!-- Right: Spread + Analyze Button -->
               <div class="flex items-center gap-3">
                 <div class="text-right">
-                  <div class="flex items-center gap-2 justify-end">
-                    <span
-                      class="px-2.5 py-1 rounded text-sm font-bold border"
-                      :class="
-                        opp.spreadPct >= 0.5
-                          ? 'bg-green-500/10 text-green-400 border-green-500/20'
-                          : opp.spreadPct >= 0.2
-                            ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
-                            : 'bg-slate-800 text-gray-400 border-slate-700'
-                      "
-                    >
-                      +{{ opp.spreadPct.toFixed(2) }}%
-                    </span>
-                  </div>
+          <div class="flex items-center gap-2 justify-end">
+            <span
+              class="px-2.5 py-1 rounded text-sm font-bold border"
+              :class="
+                opp.spreadPct >= 1
+                  ? 'bg-green-500/10 text-green-400 border-green-500/20'
+                  : opp.spreadPct >= 0.5
+                    ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20'
+                    : 'bg-slate-800 text-gray-400 border-slate-700'
+              "
+            >
+              +{{ opp.spreadPct.toFixed(2) }}%
+            </span>
+            <span
+              v-if="opp.autoVerified"
+              class="px-2 py-0.5 rounded text-xs font-bold"
+              :class="opp.autoGo ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-red-500/10 text-red-400 border border-red-500/20'"
+            >
+              {{ opp.autoGo ? "GO" : "✗" }}
+            </span>
+          </div>
                   <div class="text-xs text-gray-500 mt-1 font-mono" v-if="opp.spreadUsd > 0">
                     ~${{ opp.spreadUsd.toFixed(2) }} spread
                   </div>

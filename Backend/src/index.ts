@@ -108,6 +108,11 @@ interface ArbitrageOpportunity {
   spreadPct: number;
   spreadUsd: number;
   timestamp: number;
+  autoVerified?: boolean;
+  autoGo?: boolean;
+  autoNetProfit?: number;
+  autoRoi?: number;
+  autoReason?: string;
 }
 
 /**
@@ -235,7 +240,7 @@ async function scanArbitrageOpportunities(): Promise<{
     const spread = highest.price - lowest.price;
     const spreadPct = (spread / lowest.price) * 100;
 
-    if (spreadPct >= 0.5 && spreadPct <= 10) {
+    if (spreadPct >= 1 && spreadPct <= 10) {
       opportunities.push({
         symbol,
         pair: `${symbol}/USDT`,
@@ -912,6 +917,76 @@ app.get("/api/test-orderbook", async (req, res) => {
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", timestamp: Date.now() });
+});
+
+// Deep scan: verify all opportunities against real orderbooks, sort by GO/NO-GO
+app.post("/api/deep-scan", async (req, res) => {
+  try {
+    const { opportunities } = req.body;
+    if (!Array.isArray(opportunities) || opportunities.length === 0) {
+      res.status(400).json({ error: "Missing opportunities array" });
+      return;
+    }
+
+    const results = await Promise.allSettled(
+      opportunities.map(async (opp: ArbitrageOpportunity) => {
+        try {
+          const [buyOb, sellOb] = await Promise.all([
+            fetchOrderbook(opp.buyExchange, opp.symbol),
+            fetchOrderbook(opp.sellExchange, opp.symbol),
+          ]);
+
+          const analysis = runAnalysis(
+            buyOb.asks, sellOb.bids,
+            opp.symbol, opp.buyExchange, opp.sellExchange,
+            opp.buyPrice, opp.sellPrice,
+            [100, 500, 1000, 5000]
+          );
+
+          const best = analysis.recommendation;
+          const profitableTier = analysis.analysis.find((t) => t.feasible);
+          const go = best.decision === "GO";
+
+          return {
+            ...opp,
+            autoVerified: true,
+            autoGo: go,
+            autoNetProfit: profitableTier ? Math.round(profitableTier.netProfitUsd * 100) / 100 : 0,
+            autoRoi: profitableTier ? Math.round(profitableTier.roiPct * 100) / 100 : 0,
+            autoReason: best.reason,
+          };
+        } catch (err: any) {
+          return {
+            ...opp,
+            autoVerified: true,
+            autoGo: false,
+            autoNetProfit: 0,
+            autoRoi: 0,
+            autoReason: err.message || "Orderbook fetch failed",
+          };
+        }
+      })
+    );
+
+    const scanned: ArbitrageOpportunity[] = [];
+    for (const r of results) {
+      if (r.status === "fulfilled") scanned.push(r.value);
+    }
+
+    scanned.sort((a, b) => {
+      const aGo = a.autoGo ? 1 : 0;
+      const bGo = b.autoGo ? 1 : 0;
+      if (aGo !== bGo) return bGo - aGo;
+      if (aGo && bGo) return (b.autoNetProfit || 0) - (a.autoNetProfit || 0);
+      return b.spreadPct - a.spreadPct;
+    });
+
+    console.log(`[DeepScan] ${scanned.length} opportunities scanned, ${scanned.filter((o) => o.autoGo).length} GO`);
+    res.json({ opportunities: scanned });
+  } catch (err: any) {
+    console.error("[DeepScan] Failed:", err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Start ──────────────────────────────────────────────────────────────────

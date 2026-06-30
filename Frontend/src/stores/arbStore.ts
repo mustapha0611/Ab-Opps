@@ -3,6 +3,7 @@ import { defineStore } from "pinia";
 import type { ExchangePrice, ArbitrageOpportunity, AnalysisResult } from "@/types/crypto";
 import { fetchExchangePrices } from "@/services/findPrice";
 import { analyzeOpportunity as analyzeOpp } from "@/services/analyzeService";
+import { deepScanOpportunities } from "@/services/deepScanService";
 import { calcProfit } from "@/services/calcProfit";
 
 export const useArbStore = defineStore("arb", () => {
@@ -10,6 +11,7 @@ export const useArbStore = defineStore("arb", () => {
   const prices = ref<ExchangePrice[]>([]);
   const opportunities = ref<ArbitrageOpportunity[]>([]);
   const isLoading = ref(false);
+  const isDeepScanning = ref(false);
   const lastError = ref<string | null>(null);
   const lastUpdated = ref<Date | null>(null);
 
@@ -98,6 +100,24 @@ export const useArbStore = defineStore("arb", () => {
     }
   }
 
+  /** Deep scan: verify all opportunities against real orderbooks, sort by GO/NO-GO */
+  async function deepScan(): Promise<void> {
+    if (opportunities.value.length === 0) return;
+    isDeepScanning.value = true;
+    lastError.value = null;
+
+    try {
+      const result = await deepScanOpportunities(opportunities.value);
+      opportunities.value = result.opportunities;
+      lastUpdated.value = new Date();
+    } catch (err: any) {
+      lastError.value = err?.response?.data?.error || err.message || "Deep scan failed";
+      console.error("[Store] Deep scan failed:", err.message);
+    } finally {
+      isDeepScanning.value = false;
+    }
+  }
+
   /** Toggle expanded state for an opportunity */
   function toggleExpanded(opp: ArbitrageOpportunity) {
     const key = oppKey(opp);
@@ -145,6 +165,8 @@ export const useArbStore = defineStore("arb", () => {
     getAnalysis,
     isAnalyzing,
     isExpanded,
+    isDeepScanning,
+    deepScan,
     oppKey,
   };
 });
