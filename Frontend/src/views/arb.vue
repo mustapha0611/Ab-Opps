@@ -519,7 +519,7 @@ onErrorCaptured((err, instance, info) => {
                         </td>
                         <td class="py-2.5 px-3 text-right font-mono text-xs">
                           <span :class="tier.slippageBuyPct > 0.5 ? 'text-red-400' : 'text-gray-400'">
-                            {{ tier.slippageBuyPct > 0 ? tier.slippageBuyPct.toFixed(2) + '%' : '—' }}
+                            {{ tier.slippageBuyPct.toFixed(2) }}%
                           </span>
                         </td>
                         <td class="py-2.5 px-3 text-right font-mono text-xs text-gray-400">
@@ -528,12 +528,12 @@ onErrorCaptured((err, instance, info) => {
                         <td class="py-2.5 px-3 text-right font-mono text-sm font-semibold"
                           :class="tier.netProfitUsd > 0 ? 'text-green-400' : tier.netProfitUsd < 0 ? 'text-red-400' : 'text-gray-500'"
                         >
-                          {{ tier.netProfitUsd != null && tier.netProfitUsd !== 0 ? (tier.netProfitUsd > 0 ? '+' : '') + '$' + formatUsd(tier.netProfitUsd) : '—' }}
+                          {{ tier.netProfitUsd > 0 ? '+' : tier.netProfitUsd < 0 ? '-' : '' }}${{ formatUsd(Math.abs(tier.netProfitUsd)) }}
                         </td>
                         <td class="py-2.5 px-3 text-right font-mono text-xs"
                           :class="tier.roiPct > 0 ? 'text-green-400' : tier.roiPct < 0 ? 'text-red-400' : 'text-gray-500'"
                         >
-                          {{ tier.roiPct != null && tier.roiPct !== 0 ? (tier.roiPct > 0 ? '+' : '') + tier.roiPct.toFixed(2) + '%' : '—' }}
+                          {{ tier.roiPct > 0 ? '+' : tier.roiPct < 0 ? '-' : '' }}{{ Math.abs(tier.roiPct).toFixed(2) }}%
                         </td>
                         <td class="py-2.5 pl-3 text-center">
                           <span
