@@ -691,16 +691,17 @@ function runAnalysis(
 
     // Effective prices
     const effectiveBuyPrice = buyResult.effectivePrice;
-    const effectiveSellPrice = sellResult.totalUnits > 0
-      ? (sellResult.totalUnits * sellResult.effectivePrice) / sellResult.totalUnits
-      : 0;
+    const effectiveSellPrice = sellResult.effectivePrice;
 
-    // Slippage
-    const slippageBuyPct = spotBuyPrice > 0
-      ? ((effectiveBuyPrice - spotBuyPrice) / spotBuyPrice) * 100
+    // Slippage: measure from best available orderbook level, not global ticker price
+    // This shows true market impact of the fill rather than ticker-to-orderbook spread
+    const bestAskPrice = buyAsks[0]?.price || 0;
+    const bestBidPrice = sellBids[0]?.price || 0;
+    const slippageBuyPct = bestAskPrice > 0
+      ? ((effectiveBuyPrice - bestAskPrice) / bestAskPrice) * 100
       : 0;
-    const slippageSellPct = spotSellPrice > 0
-      ? ((spotSellPrice - effectiveSellPrice) / spotSellPrice) * 100
+    const slippageSellPct = bestBidPrice > 0
+      ? ((bestBidPrice - effectiveSellPrice) / bestBidPrice) * 100
       : 0;
 
     // Costs and revenue
