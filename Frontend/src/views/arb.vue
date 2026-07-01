@@ -196,13 +196,13 @@ onErrorCaptured((err, instance, info) => {
 
     <!-- Opportunities List -->
     <div class="glass-card p-6 min-h-96">
-      <div class="flex items-center justify-between mb-6">
-        <h2 class="text-xl font-bold flex items-center gap-2">
-          <Zap class="w-5 h-5 text-neon-cyan" />
-          Arbitrage Opportunities
-          <span v-if="sortedOpps.length > 0 && sortedOpps[0].autoVerified" class="text-xs font-normal px-2 py-0.5 rounded-full bg-neon-cyan/10 text-neon-cyan ml-2">Deep Scanned</span>
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-6">
+        <h2 class="text-xl font-bold flex items-center gap-2 flex-wrap">
+          <Zap class="w-5 h-5 text-neon-cyan shrink-0" />
+          <span>Arbitrage Opportunities</span>
+          <span v-if="sortedOpps.length > 0 && sortedOpps[0].autoVerified" class="text-xs font-normal px-2 py-0.5 rounded-full bg-neon-cyan/10 text-neon-cyan">Deep Scanned</span>
         </h2>
-        <div class="flex items-center gap-3">
+        <div class="flex items-center gap-3 shrink-0">
           <span class="text-xs text-gray-500 font-mono" v-if="store.lastUpdated">
             {{ store.lastUpdated.toLocaleTimeString() }}
           </span>
@@ -365,7 +365,7 @@ onErrorCaptured((err, instance, info) => {
                   <XCircle v-else class="w-6 h-6 text-red-400" />
                 </div>
                 <div>
-                  <div class="flex items-center gap-3 mb-1">
+                  <div class="flex items-center gap-3 mb-1 flex-wrap">
                     <span
                       class="text-lg font-bold"
                       :class="
@@ -447,7 +447,7 @@ onErrorCaptured((err, instance, info) => {
                     <BarChart3 class="w-4 h-4 text-neon-purple" />
                     Orderbook Snapshot
                   </h4>
-                  <div class="grid grid-cols-2 gap-3">
+                  <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <!-- Buy Asks -->
                     <div>
                       <div class="text-xs text-gray-500 mb-1.5">Asks ({{ exchangeLabel(opp.buyExchange) }})</div>
