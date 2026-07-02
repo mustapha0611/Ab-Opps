@@ -595,7 +595,8 @@ interface AnalysisResult {
 function simulateOrderbookFill(
   levels: OrderbookLevel[],
   amountUsd: number,
-  side: "buy" | "sell"
+  side: "buy" | "sell",
+  maxUnits?: number
 ): { effectivePrice: number; totalUnits: number; filledUsd: number; levelsUsed: number; totalCost: number } {
   let remainingUsd = amountUsd;
   let totalUnits = 0;
@@ -625,7 +626,9 @@ function simulateOrderbookFill(
       }
     } else {
       // Selling: we have units to sell, compute revenue
-      const unitsToSell = Math.min(level.size, remainingUsd / level.price);
+      const unitsDesired = remainingUsd / level.price;
+      const unitsAvailable = maxUnits !== undefined ? Math.max(0, maxUnits - totalUnits) : Infinity;
+      const unitsToSell = Math.min(level.size, unitsDesired, unitsAvailable);
       const revenue = unitsToSell * level.price;
       totalUnits += unitsToSell;
       totalCost += revenue;
@@ -696,7 +699,7 @@ function runAnalysis(
 
     // Simulate selling those units on sell exchange (walk the bids)
     const sellValueUsd = buyResult.totalUnits * sellBids[0]?.price || 0;
-    const sellResult = simulateOrderbookFill(sellBids, sellValueUsd, "sell");
+    const sellResult = simulateOrderbookFill(sellBids, sellValueUsd, "sell", buyResult.totalUnits);
 
     // Effective prices
     const effectiveBuyPrice = buyResult.effectivePrice;
