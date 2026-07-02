@@ -474,7 +474,7 @@ async function tryFetchTicker(ex: string, sym: string): Promise<TickerData | nul
 function estimateOrderbook(ticker: TickerData, ex: string, sym: string): OrderbookData {
   const levels = 8;
   const price = (ticker.bidPrice + ticker.askPrice) / 2;
-  const avgLevelSize = ticker.volume24hUsd / 28800 / price; // ~1 tick of 24h volume per level
+  const avgLevelSize = Math.max(ticker.volume24hUsd / 28800 / price || 0, 1); // ~1 tick of 24h volume per level
 
   const stepPct = [0.001, 0.002, 0.003, 0.005, 0.008, 0.012, 0.018, 0.025];
   const sizeMult = [1.0, 0.85, 0.7, 0.55, 0.4, 0.3, 0.2, 0.1];
@@ -518,8 +518,12 @@ async function fetchOrderbook(exchange: string, baseSymbol: string): Promise<Ord
   if (apis.depth) {
     const result = await tryFetch(ex, apis.depth, `${ex}:${sym} depth`);
     if (result) {
-      const asks = result.asks.map(([p, s]: [string, string]) => ({ price: +p, size: +s }));
-      const bids = result.bids.map(([p, s]: [string, string]) => ({ price: +p, size: +s }));
+      const asks = (result.asks || [])
+        .map(([p, s]: [string, string]) => ({ price: +p, size: +s }))
+        .filter((l: OrderbookLevel) => l.price > 0 && l.size > 0 && !Number.isNaN(l.price) && !Number.isNaN(l.size));
+      const bids = (result.bids || [])
+        .map(([p, s]: [string, string]) => ({ price: +p, size: +s }))
+        .filter((l: OrderbookLevel) => l.price > 0 && l.size > 0 && !Number.isNaN(l.price) && !Number.isNaN(l.size));
       return { exchange: ex, symbol: baseSymbol, asks, bids, timestamp: new Date().toISOString() };
     }
     console.log(`[Orderbook] Depth API failed for ${ex}:${sym}, trying ticker fallback...`);
@@ -756,7 +760,7 @@ function runAnalysis(
       optimalInvestment: best.investmentUsd,
       expectedProfit: best.netProfitUsd,
       expectedRoi: best.roiPct,
-      reason: `Best ROI at $${best.investmentUsd} investment. Net profit: $${best.netProfitUsd.toFixed(2)} (${best.roiPct.toFixed(2)}% ROI). Slippage: ${best.slippageBuyPct.toFixed(2)}% buy, ${best.slippageSellPct.toFixed(2)}% sell.`,
+      reason: `Best ROI at $${best.investmentUsd} investment. Net profit: $${(best.netProfitUsd || 0).toFixed(2)} (${(best.roiPct || 0).toFixed(2)}% ROI). Slippage: ${(best.slippageBuyPct || 0).toFixed(2)}% buy, ${(best.slippageSellPct || 0).toFixed(2)}% sell.`,
     };
   } else {
     const bestTier = tiers.reduce((a, b) =>
@@ -768,7 +772,7 @@ function runAnalysis(
       expectedProfit: bestTier.netProfitUsd,
       expectedRoi: bestTier.roiPct,
       reason: sufficient
-        ? `Fees and slippage exceed the spread. Best case: $${bestTier.netProfitUsd.toFixed(2)} loss at $${bestTier.investmentUsd}.`
+        ? `Fees and slippage exceed the spread. Best case: $${(bestTier.netProfitUsd || 0).toFixed(2)} loss at $${bestTier.investmentUsd}.`
         : `Insufficient liquidity. Buy: $${buyLiquidityUsd.toFixed(0)}, Sell: $${sellLiquidityUsd.toFixed(0)}.`,
     };
   }
