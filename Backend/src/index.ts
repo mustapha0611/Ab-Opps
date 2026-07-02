@@ -652,9 +652,14 @@ function runAnalysis(
   spotSellPrice: number,
   investmentAmounts: number[]
 ): AnalysisResult {
+  const bestAsk = buyAsks[0]?.price || 0;
+  const bestBid = sellBids[0]?.price || 0;
+  const obSpread = bestAsk > 0 ? ((bestBid - bestAsk) / bestAsk) * 100 : 0;
+
   // ── Liquidity Check ──
   const buyLiquidityUsd = buyAsks.reduce((sum, l) => sum + l.price * l.size, 0);
   const sellLiquidityUsd = sellBids.reduce((sum, l) => sum + l.price * l.size, 0);
+  console.log(`[runAnalysis] ${symbol}: bestAsk=${bestAsk.toFixed(6)} bestBid=${bestBid.toFixed(6)} obSpread=${obSpread.toFixed(2)}% spotBuy=${spotBuyPrice} spotSell=${spotSellPrice} buyLevels=${buyAsks.length} sellLevels=${sellBids.length} buyLiq=$${buyLiquidityUsd.toFixed(0)} sellLiq=$${sellLiquidityUsd.toFixed(0)}`);
   const sufficient = buyLiquidityUsd > 50 && sellLiquidityUsd > 50;
 
   // ── Per-tier analysis ──
@@ -723,6 +728,10 @@ function runAnalysis(
     const buyFilled = buyResult.filledUsd >= investmentUsd * 0.9;
     const sellFilled = sellResult.totalUnits >= buyResult.totalUnits * 0.9;
     const feasible = netProfitUsd > 0 && buyFilled && sellFilled;
+
+    if (!feasible) {
+      console.log(`[Tier] $${investmentUsd}: buyCost=$${buyCost.toFixed(2)} sellRev=$${sellRevenue.toFixed(2)} fees=$${totalFeesUsd.toFixed(2)} net=$${netProfitUsd.toFixed(2)} buyFill=${buyFilled}(${buyResult.filledUsd.toFixed(2)}/${(investmentUsd*0.9).toFixed(2)}) sellFill=${sellFilled}(${sellResult.totalUnits.toFixed(4)}/${(buyResult.totalUnits*0.9).toFixed(4)} units) slippageBuy=${slippageBuyPct.toFixed(2)}% slippageSell=${slippageSellPct.toFixed(2)}%`);
+    }
 
     return {
       investmentUsd,
