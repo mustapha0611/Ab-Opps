@@ -2,6 +2,7 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import dns from "node:dns";
+import { getExchangeFees } from "./fees";
 dotenv.config();
 
 // Bypass local DNS blockings if needed (e.g. for KuCoin in some regions)
@@ -276,11 +277,11 @@ const TAKER_FEES: Record<string, number> = {
 
 /** Estimated withdrawal fees in USDT (flat) */
 const WITHDRAWAL_FEES: Record<string, number> = {
-  binance: 1.0,
-  bybit: 1.0,
+  binance: 0.3,
+  bybit: 0.3,
   kucoin: 1.0,
   bitget: 1.0,
-  mexc: 1.0,
+  mexc: 0.3,
   coinbase: 0.0,
   gate: 1.0,
 };
@@ -653,7 +654,8 @@ function runAnalysis(
   sellExchange: string,
   spotBuyPrice: number,
   spotSellPrice: number,
-  investmentAmounts: number[]
+  investmentAmounts: number[],
+  feeOverrides?: { buyFeePct: number; sellFeePct: number; withdrawalFee: number }
 ): AnalysisResult {
   const bestAsk = buyAsks[0]?.price || 0;
   const bestBid = sellBids[0]?.price || 0;
@@ -666,9 +668,9 @@ function runAnalysis(
   const sufficient = buyLiquidityUsd > 50 && sellLiquidityUsd > 50;
 
   // ── Per-tier analysis ──
-  const buyFeePct = TAKER_FEES[buyExchange.toLowerCase()] ?? 0.15;
-  const sellFeePct = TAKER_FEES[sellExchange.toLowerCase()] ?? 0.15;
-  const withdrawalFee = WITHDRAWAL_FEES[buyExchange.toLowerCase()] ?? 1.0;
+  const buyFeePct = feeOverrides?.buyFeePct ?? TAKER_FEES[buyExchange.toLowerCase()] ?? 0.15;
+  const sellFeePct = feeOverrides?.sellFeePct ?? TAKER_FEES[sellExchange.toLowerCase()] ?? 0.15;
+  const withdrawalFee = feeOverrides?.withdrawalFee ?? WITHDRAWAL_FEES[buyExchange.toLowerCase()] ?? 1.0;
 
   const tiers: InvestmentTier[] = investmentAmounts.map((investmentUsd) => {
     // Simulate buying on buy exchange (walk the asks)
@@ -891,7 +893,16 @@ app.post("/api/analyze-opportunity", async (req, res) => {
       console.warn(`[Analysis] Partial failure (graceful): ${errors[0]}`);
     }
 
-    // Step 2: Run full analysis pipeline
+    // Step 2: Fetch live fees (cached, public endpoints)
+    const [buyFees, sellFees] = await Promise.all([
+      getExchangeFees(buyExchange),
+      getExchangeFees(sellExchange),
+    ]);
+    const buyFeePct = buyFees.takerFee;
+    const sellFeePct = sellFees.takerFee;
+    const withdrawalFee = buyFees.withdrawalFee;
+
+    // Step 3: Run full analysis pipeline with live fees
     const result = runAnalysis(
       buyOrderbook.asks,
       sellOrderbook.bids,
@@ -900,10 +911,11 @@ app.post("/api/analyze-opportunity", async (req, res) => {
       sellExchange,
       buyPrice || 0,
       sellPrice || 0,
-      investmentAmounts
+      investmentAmounts,
+      { buyFeePct, sellFeePct, withdrawalFee }
     );
 
-    console.log(`[Analysis] ${symbol}: ${result.recommendation.decision} — ${result.recommendation.reason}`);
+    console.log(`[Analysis] ${symbol}: ${result.recommendation.decision} — ${result.recommendation.reason} (fees: buy=${buyFeePct}% sell=${sellFeePct}% wd=$${withdrawalFee})`);
     res.json(result);
   } catch (err: any) {
     console.error("[Analysis] Failed:", err.message);
@@ -950,16 +962,19 @@ app.post("/api/deep-scan", async (req, res) => {
     const results = await Promise.allSettled(
       opportunities.map(async (opp: ArbitrageOpportunity) => {
         try {
-          const [buyOb, sellOb] = await Promise.all([
+          const [buyOb, sellOb, buyFees, sellFees] = await Promise.all([
             fetchOrderbook(opp.buyExchange, opp.symbol),
             fetchOrderbook(opp.sellExchange, opp.symbol),
+            getExchangeFees(opp.buyExchange),
+            getExchangeFees(opp.sellExchange),
           ]);
 
           const analysis = runAnalysis(
             buyOb.asks, sellOb.bids,
             opp.symbol, opp.buyExchange, opp.sellExchange,
             opp.buyPrice, opp.sellPrice,
-            [100, 200, 500, 1000, 5000]
+            [100, 200, 500, 1000, 5000],
+            { buyFeePct: buyFees.takerFee, sellFeePct: sellFees.takerFee, withdrawalFee: buyFees.withdrawalFee }
           );
 
           const best = analysis.recommendation;
