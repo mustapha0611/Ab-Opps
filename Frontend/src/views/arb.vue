@@ -57,6 +57,15 @@ function formatUsd(val: number): string {
   return val.toFixed(2);
 }
 
+function orderbookSpread(opp: ArbitrageOpportunity): string | null {
+  const analysis = store.getAnalysis(opp);
+  const bestAsk = analysis?.orderbook.buyAsks[0]?.price;
+  const bestBid = analysis?.orderbook.sellBids[0]?.price;
+  if (!bestAsk || !bestBid || bestAsk <= 0) return null;
+  const pct = ((bestBid - bestAsk) / bestAsk) * 100;
+  return (pct > 0 ? '+' : '') + pct.toFixed(2) + '%';
+}
+
 const sortedOpps = computed(() => {
   const list = [...store.opportunities];
   if (list.length > 0 && list[0].autoVerified) return list;
@@ -436,6 +445,18 @@ onErrorCaptured((err, instance, info) => {
                       </span>
                       <span class="text-xs text-gray-500">
                         {{ store.getAnalysis(opp)?.liquidity.buyLevels }} / {{ store.getAnalysis(opp)?.liquidity.sellLevels }} levels
+                      </span>
+                    </div>
+                    <div class="flex items-center justify-between pt-2 border-t border-slate-800/50">
+                      <span class="text-xs text-gray-500">Orderbook spread</span>
+                      <span class="font-mono text-xs"
+                        :class="{
+                          'text-green-400': (orderbookSpread(opp) || '').startsWith('+'),
+                          'text-red-400': (orderbookSpread(opp) || '').startsWith('-'),
+                          'text-gray-500': !orderbookSpread(opp)
+                        }"
+                      >
+                        {{ orderbookSpread(opp) || '—' }}
                       </span>
                     </div>
                   </div>
