@@ -596,7 +596,7 @@ function simulateOrderbookFill(
   levels: OrderbookLevel[],
   amountUsd: number,
   side: "buy" | "sell"
-): { effectivePrice: number; totalUnits: number; filledUsd: number; levelsUsed: number } {
+): { effectivePrice: number; totalUnits: number; filledUsd: number; levelsUsed: number; totalCost: number } {
   let remainingUsd = amountUsd;
   let totalUnits = 0;
   let totalCost = 0;
@@ -636,7 +636,7 @@ function simulateOrderbookFill(
   const filledUsd = amountUsd - remainingUsd;
   const effectivePrice = totalUnits > 0 ? totalCost / totalUnits : 0;
 
-  return { effectivePrice, totalUnits, filledUsd, levelsUsed };
+  return { effectivePrice, totalUnits, filledUsd, levelsUsed, totalCost };
 }
 
 /**
